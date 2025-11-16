@@ -1,44 +1,51 @@
-import /init.recovery.usb.rc
+on early-init
+    write /sys/fs/selinux/enforce 0
 
-#add for board init.rc for recovery mode
-on post-fs
+on init
 
-    symlink /prodnv /mnt/vendor
+    symlink /vendor/lib64/hw/gatekeeper.default.so /vendor/lib64/hw/gatekeeper.ums312.so
+    symlink /vendor/lib64/hw/gatekeeper.default.so /vendor/lib64/hw/gatekeeper.${ro.hardware}.so
+    symlink /vendor/lib64/hw/keystore.sprdtrusty.so /vendor/lib64/hw/keystore.${ro.hardware}.so
     symlink /vendor/lib64/hw/keystore.sprdtrusty.so /vendor/lib64/hw/keystore.ums312.so
-    symlink /sbin/keystore.sprdtrusty.so /sbin/keystore.ums312.so
-
-# Add By hxzbaka sprd FBE Fixed
+    start logd
 
 service keymaster-3-0 /sbin/android.hardware.keymaster@3.0-service
-    seclabel u:r:recovery:s0
     user root
     group root drmrpc
-    disabled
-
-service gatekeeper-1-0 /sbin/android.hardware.gatekeeper@1.0-service
-    disabled
-    user root
-    group root
-    seclabel u:r:recovery
-
-# keystore is started and stopped on demand by TWRP
-service keystore /sbin/keystore /tmp/misc/keystore
-    user root
-    group root drmrpc readproc
-    disabled
     seclabel u:r:recovery:s0
 
-service hwservicemanager /sbin/hwservicemanager
+service gatekeeper-1-0 /sbin/android.hardware.gatekeeper@1.0-service
+    user root
+    group root
+    seclabel u:r:recovery:s0
+
+on post-fs
+    start servicemanager
+    start hwservicemanager
+    start vndservicemanager
+    
+    # Wait for keymaster
+    exec_start wait_for_keymaster
+    
+service vndservicemanager /vendor/bin/vndservicemanager /dev/vndbinder
     user root
     group root
     disabled
-    onrestart setprop hwservicemanager.ready false
+    writepid /dev/cpuset/system-background/tasks
+    seclabel u:r:recovery:s0
+
+service hwservicemanager /sbin/hwservicemanager /dev/hwbinder
+    user root
+    group root
+    disabled
+    writepid /dev/cpuset/system-background/tasks
     seclabel u:r:recovery:s0
 
 service servicemanager /sbin/servicemanager
     user root
-    group root readproc
+    group root
     disabled
+    writepid /dev/cpuset/system-background/tasks
     seclabel u:r:recovery:s0
 
 service keystore_auth /sbin/keystore_auth
@@ -48,22 +55,35 @@ service keystore_auth /sbin/keystore_auth
     disabled
     seclabel u:r:recovery:s0
 
-on property:crypto.ready=1
+on property:recovery.service=1
+    start servicemanager
     start keymaster-3-0
     start gatekeeper-1-0
-    start servicemanager
 
-on property:crypto.ready=0
-    stop gatekeeper-1-0
-    stop keymaster-3-0
+on ro.crypto.state=encrypted
+    start keymaster-3-0
+    start gatekeeper-1-0
 
 on property:ro.crypto.state=unsupported
-    stop gatekeeper-1-0
+    stop servicemanager
+    stop hwservicemanager
+    stop vndservicemanager
     stop keymaster-3-0
+    stop gatekeeper-1-0
+
+on property:ro.crypto.state=unencrypted
+    stop servicemanager
+    stop hwservicemanager
+    stop vndservicemanager
+    stop keymaster-3-0
+    stop gatekeeper-1-0
 
 on property:twrp.decrypt.done=true && property:twrp.all.users.decrypted=true
-    stop gatekeeper-1-0
+    stop servicemanager
+    stop hwservicemanager
+    stop vndservicemanager
     stop keymaster-3-0
+    stop gatekeeper-1-0
 
 on init
     start hwservicemanager
